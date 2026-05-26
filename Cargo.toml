@@ -1,0 +1,8 @@
+[package]
+name = "dungeoncrawler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bracket-lib = "0.8.7"
+macroquad = "0.4.15"
