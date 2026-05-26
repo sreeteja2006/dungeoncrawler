@@ -50,8 +50,17 @@ impl Menu {
 
             // Button shadow + bg
             draw_rectangle(bx+4.0, by+4.0, bw, bh, Color::from_rgba(0,0,0,120));
-            let bg = if selected { Color::from_rgba(color.r as u8, color.g as u8, color.b as u8, 60) }
-                     else        { Color::from_rgba(20,20,30,200) };
+            // FIX: color.r/g/b are f32 in [0,1]; must multiply by 255 before casting to u8
+            let bg = if selected {
+                Color::from_rgba(
+                    (color.r * 255.0) as u8,
+                    (color.g * 255.0) as u8,
+                    (color.b * 255.0) as u8,
+                    60,
+                )
+            } else {
+                Color::from_rgba(20,20,30,200)
+            };
             draw_rectangle(bx, by, bw, bh, bg);
             // Border
             let border = if selected { *color } else { Color::from_rgba(80,70,100,255) };

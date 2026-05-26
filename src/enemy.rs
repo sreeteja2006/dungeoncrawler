@@ -76,7 +76,13 @@ impl Enemy {
         let dist = (dx*dx + dy*dy).sqrt();
 
         match self.state {
-            EnemyState::Idle    => { if dist < 300.0 { self.state = EnemyState::Chasing; } }
+            EnemyState::Idle => {
+                if dist < 300.0 {
+                    self.state = EnemyState::Chasing;
+                    // FIX: set facing immediately on aggro so sprite doesn't lag one frame
+                    if dist > 0.0 { self.facing_left = dx < 0.0; }
+                }
+            }
             EnemyState::Chasing => {
                 if dist > 0.0 { self.facing_left = dx < 0.0; }
                 if dist > 400.0 { self.state = EnemyState::Idle; }

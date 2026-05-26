@@ -32,33 +32,39 @@ impl Room {
         let sh = screen_height();
 
         if room_type != RoomType::Start {
-            // Generate obstacles FIRST so enemy spawns can avoid them
+            // Generate obstacles first so enemy spawns can avoid them
             let obs_count = gen_range(5, 10);
             for _ in 0..obs_count {
                 let (ow, oh) = (64.0_f32, 64.0_f32);
-                let (ox, oy) = loop {
-                    let ox = gen_range(MARGIN, sw - MARGIN - ow);
-                    let oy = gen_range(MARGIN, sh - MARGIN - oh);
+                // FIX: limit iterations to prevent infinite loop in edge-case tiny windows
+                let mut placed = false;
+                for _ in 0..200 {
+                    let ox = gen_range(MARGIN, (sw - MARGIN - ow).max(MARGIN + 1.0));
+                    let oy = gen_range(MARGIN, (sh - MARGIN - oh).max(MARGIN + 1.0));
                     let r = Rect::new(ox, oy, ow, oh);
                     let safe = Rect::new(sw/2.0-120.0, sh/2.0-120.0, 240.0, 240.0);
-                    if !r.overlaps(&safe) { break (ox, oy); }
-                };
-                obstacles.push(Rect::new(ox, oy, ow, oh));
+                    if !r.overlaps(&safe) { obstacles.push(Rect::new(ox, oy, ow, oh)); placed = true; break; }
+                }
+                let _ = placed; // allow failure silently rather than hang
             }
 
             // Spawn enemies avoiding obstacles and center safe zone
             let count = match room_type { RoomType::Boss => 1, _ => gen_range(3, 7) };
             for _ in 0..count {
                 let ew = 64.0_f32; let eh = 64.0_f32;
-                let (x, y) = loop {
-                    let x = gen_range(MARGIN, sw - MARGIN - ew);
-                    let y = gen_range(MARGIN, sh - MARGIN - eh);
+                // FIX: limit iterations to prevent infinite loop
+                let mut spawn_pos = None;
+                for _ in 0..300 {
+                    let x = gen_range(MARGIN, (sw - MARGIN - ew).max(MARGIN + 1.0));
+                    let y = gen_range(MARGIN, (sh - MARGIN - eh).max(MARGIN + 1.0));
                     let cx = sw / 2.0; let cy = sh / 2.0;
                     let far_from_center = ((x-cx).powi(2) + (y-cy).powi(2)).sqrt() > 150.0;
                     let e_rect = Rect::new(x, y, ew, eh);
                     let no_obs_overlap = obstacles.iter().all(|o| !e_rect.overlaps(o));
-                    if far_from_center && no_obs_overlap { break (x, y); }
-                };
+                    if far_from_center && no_obs_overlap { spawn_pos = Some((x, y)); break; }
+                }
+                // Fall back to a corner if no valid position found
+                let (x, y) = spawn_pos.unwrap_or((MARGIN, MARGIN));
 
                 let e_type = if room_type == RoomType::Boss { EnemyType::Vampire }
                     else { match gen_range(0, 3) { 0 => EnemyType::Skeleton1, 1 => EnemyType::Skeleton2, _ => EnemyType::Vampire } };

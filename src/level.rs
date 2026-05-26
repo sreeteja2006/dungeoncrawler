@@ -9,6 +9,8 @@ use crate::enemy::EnemyState;
 
 pub const WALL: f32 = 48.0;
 const DOOR_HALF: f32 = 40.0;
+// Floor colour used when drawing door openings over wall rects
+const FLOOR_COLOR: Color = Color { r: 0.196, g: 0.196, b: 0.235, a: 1.0 };
 
 pub struct Level {
     pub rooms: HashMap<(i32,i32), Room>,
@@ -16,6 +18,8 @@ pub struct Level {
     pub player: Player,
     pub projectiles: Vec<Projectile>,
     pub back_to_menu: bool,
+    // FIX: track win state so killing the boss leads to a victory screen
+    pub won: bool,
 }
 
 impl Level {
@@ -38,8 +42,13 @@ impl Level {
         for (pos, rt) in type_map { rooms.insert(pos, Room::new(rt)); }
 
         let sw = screen_width(); let sh = screen_height();
-        Self { rooms, current_room:(0,0), player: Player::new(sw/2.0, sh/2.0),
-               projectiles: Vec::new(), back_to_menu: false }
+        Self {
+            rooms, current_room:(0,0),
+            player: Player::new(sw/2.0, sh/2.0),
+            projectiles: Vec::new(),
+            back_to_menu: false,
+            won: false,
+        }
     }
 
     pub fn update_level(&mut self) {
@@ -48,6 +57,11 @@ impl Level {
 
         if is_key_pressed(KeyCode::Escape) { self.back_to_menu = true; return; }
 
+        // ── Win / death screens: only handle restart/exit input ──
+        if self.won {
+            if is_key_pressed(KeyCode::R) { *self = Level::new(); }
+            return;
+        }
         if self.player.hp <= 0 {
             if is_key_pressed(KeyCode::R) { *self = Level::new(); }
             return;
@@ -104,11 +118,16 @@ impl Level {
             for item in &mut room.items {
                 if !item.collected && ((cx-item.x).powi(2)+(cy-item.y).powi(2)).sqrt() < 40.0 {
                     item.collected = true;
-                    match item.item_type { ItemType::Health => { self.player.max_hp+=1; self.player.hp=self.player.max_hp; } ItemType::Speed => self.player.speed += 50.0 }
+                    match item.item_type {
+                        ItemType::Health => { self.player.max_hp+=1; self.player.hp=self.player.max_hp; }
+                        ItemType::Speed  => self.player.speed += 50.0,
+                    }
                 }
             }
             room.pickups.retain(|p| {
-                if ((cx-p.x).powi(2)+(cy-p.y).powi(2)).sqrt() < 30.0 && self.player.hp < self.player.max_hp { self.player.hp+=1; return false; }
+                if ((cx-p.x).powi(2)+(cy-p.y).powi(2)).sqrt() < 30.0 && self.player.hp < self.player.max_hp {
+                    self.player.hp+=1; return false;
+                }
                 true
             });
         }
@@ -120,16 +139,23 @@ impl Level {
         let mut trans = false;
         let (rx,ry) = self.current_room;
 
+        // FIX: transition triggers now match the wall-boundary clamp below.
+        // Player right edge (x+pw) touching right wall → x >= sw-pw-WALL (== clamp max).
+        // Player left  edge (x)    touching left wall  → x <= WALL         (== clamp min).
+        // Same logic for top/bottom.
         if clear {
-            if      self.player.x >= sw-pw   && cy>mh-ds && cy<mh+ds && self.rooms.contains_key(&(rx+1,ry)) { self.current_room=(rx+1,ry); self.player.x=WALL+10.0; self.player.y=mh-ph/2.0; trans=true; }
-            else if self.player.x <= 0.0      && cy>mh-ds && cy<mh+ds && self.rooms.contains_key(&(rx-1,ry)) { self.current_room=(rx-1,ry); self.player.x=sw-pw-WALL-10.0; self.player.y=mh-ph/2.0; trans=true; }
-            else if self.player.y >= sh-ph    && cx>mw-ds && cx<mw+ds && self.rooms.contains_key(&(rx,ry+1)) { self.current_room=(rx,ry+1); self.player.x=mw-pw/2.0; self.player.y=WALL+10.0; trans=true; }
-            else if self.player.y <= 0.0      && cx>mw-ds && cx<mw+ds && self.rooms.contains_key(&(rx,ry-1)) { self.current_room=(rx,ry-1); self.player.x=mw-pw/2.0; self.player.y=sh-ph-WALL-10.0; trans=true; }
+            if      self.player.x + pw >= sw - WALL && cy>mh-ds && cy<mh+ds && self.rooms.contains_key(&(rx+1,ry)) { self.current_room=(rx+1,ry); self.player.x=WALL+10.0; self.player.y=mh-ph/2.0; trans=true; }
+            else if self.player.x       <= WALL      && cy>mh-ds && cy<mh+ds && self.rooms.contains_key(&(rx-1,ry)) { self.current_room=(rx-1,ry); self.player.x=sw-pw-WALL-10.0; self.player.y=mh-ph/2.0; trans=true; }
+            else if self.player.y + ph >= sh - WALL  && cx>mw-ds && cx<mw+ds && self.rooms.contains_key(&(rx,ry+1)) { self.current_room=(rx,ry+1); self.player.x=mw-pw/2.0; self.player.y=WALL+10.0; trans=true; }
+            else if self.player.y       <= WALL       && cx>mw-ds && cx<mw+ds && self.rooms.contains_key(&(rx,ry-1)) { self.current_room=(rx,ry-1); self.player.x=mw-pw/2.0; self.player.y=sh-ph-WALL-10.0; trans=true; }
         }
         if trans { self.projectiles.clear(); self.player.invulnerable_timer = 1.0; }
 
-        self.player.x = self.player.x.clamp(0.0, sw-pw);
-        self.player.y = self.player.y.clamp(0.0, sh-ph);
+        // Clamp player to stay inside the visual walls (enemies already use WALL bounds).
+        // This matches the transition trigger conditions above: at clamp boundaries the
+        // transition predicates are exactly true (e.g. x+pw == sw-WALL for right door).
+        self.player.x = self.player.x.clamp(WALL, sw - pw - WALL);
+        self.player.y = self.player.y.clamp(WALL, sh - ph - WALL);
 
         // ── Enemies & projectiles ──
         if let Some(room) = self.rooms.get_mut(&self.current_room) {
@@ -154,6 +180,9 @@ impl Level {
             // Move enemies
             let n = room.enemies.len();
             for i in 0..n {
+                // FIX: skip dead enemies in all per-enemy logic
+                if !room.enemies[i].alive { continue; }
+
                 let (oex, oey) = (room.enemies[i].x, room.enemies[i].y);
                 let (ew, eh)   = (room.enemies[i].width, room.enemies[i].height);
 
@@ -188,6 +217,9 @@ impl Level {
 
                 // Enemy-enemy separation
                 for j in (i+1)..n {
+                    // FIX: skip dead enemies in separation so corpses don't shove live ones
+                    if !room.enemies[j].alive { continue; }
+
                     let dx = room.enemies[j].x - room.enemies[i].x;
                     let dy = room.enemies[j].y - room.enemies[i].y;
                     let sep = (room.enemies[i].width + room.enemies[j].width) / 2.0;
@@ -199,16 +231,17 @@ impl Level {
                     }
                 }
 
-                // Player damage
-                if Rect::new(room.enemies[i].x,room.enemies[i].y,ew,eh)
-                    .overlaps(&Rect::new(self.player.x,self.player.y,pw,ph))
+                // FIX: only alive enemies deal contact damage
+                if room.enemies[i].alive
+                    && Rect::new(room.enemies[i].x, room.enemies[i].y, ew, eh)
+                        .overlaps(&Rect::new(self.player.x, self.player.y, pw, ph))
                     && self.player.invulnerable_timer <= 0.0
                 {
                     self.player.hp -= 1; self.player.invulnerable_timer = 1.5;
                 }
             }
 
-            // Projectile-enemy
+            // Projectile-enemy hits
             for p in self.projectiles.iter_mut() {
                 if !p.alive { continue; }
                 let pr = Rect::new(p.x-4.0,p.y-4.0,8.0,8.0);
@@ -226,6 +259,11 @@ impl Level {
 
             room.enemies.retain(|e| e.alive);
             room.pickups.append(&mut drops);
+
+            // FIX: detect boss kill → set won flag
+            if !self.won && room.room_type == RoomType::Boss && room.enemies.is_empty() {
+                self.won = true;
+            }
         }
         self.projectiles.retain(|p| p.alive && p.x>0.0 && p.x<sw && p.y>0.0 && p.y<sh);
     }
@@ -235,12 +273,16 @@ impl Level {
 
         if let Some(room) = self.rooms.get(&self.current_room) {
             room.draw(res);
+
+            // FIX: draw door openings in floor colour covering the FULL wall thickness (48 px),
+            //      not just 20 px in BLACK which was nearly invisible.
             if room.enemies.is_empty() {
                 let ds = DOOR_HALF; let (rx,ry) = self.current_room;
-                if self.rooms.contains_key(&(rx+1,ry)) { draw_rectangle(sw-20.0,sh/2.0-ds,20.0,ds*2.0,BLACK); }
-                if self.rooms.contains_key(&(rx-1,ry)) { draw_rectangle(0.0,    sh/2.0-ds,20.0,ds*2.0,BLACK); }
-                if self.rooms.contains_key(&(rx,ry+1)) { draw_rectangle(sw/2.0-ds,sh-20.0,ds*2.0,20.0,BLACK); }
-                if self.rooms.contains_key(&(rx,ry-1)) { draw_rectangle(sw/2.0-ds,0.0,    ds*2.0,20.0,BLACK); }
+                let door_col = FLOOR_COLOR;
+                if self.rooms.contains_key(&(rx+1,ry)) { draw_rectangle(sw-WALL,   sh/2.0-ds, WALL,   ds*2.0, door_col); }
+                if self.rooms.contains_key(&(rx-1,ry)) { draw_rectangle(0.0,       sh/2.0-ds, WALL,   ds*2.0, door_col); }
+                if self.rooms.contains_key(&(rx,ry+1)) { draw_rectangle(sw/2.0-ds, sh-WALL,   ds*2.0, WALL,   door_col); }
+                if self.rooms.contains_key(&(rx,ry-1)) { draw_rectangle(sw/2.0-ds, 0.0,       ds*2.0, WALL,   door_col); }
             }
         }
 
@@ -265,6 +307,7 @@ impl Level {
         // ── ESC hint ──
         draw_text("ESC: Menu", sw - 110.0, sh - 14.0, 18.0, Color::from_rgba(140,130,160,200));
 
+        // ── Game-over overlay ──
         if self.player.hp <= 0 {
             draw_rectangle(0.0,0.0,sw,sh,Color::from_rgba(0,0,0,160));
             let t = "GAME OVER";
@@ -274,6 +317,21 @@ impl Level {
             let s = "Press R to Restart  |  ESC for Menu";
             let sw2 = measure_text(s,None,22,1.0).width;
             draw_text(s, sw/2.0-sw2/2.0, sh/2.0+50.0, 22.0, WHITE);
+        }
+
+        // FIX: win screen
+        if self.won {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::from_rgba(0, 0, 0, 180));
+            let t = "YOU WIN!";
+            let tw = measure_text(t, None, 70, 1.0).width;
+            draw_text(t, sw/2.0-tw/2.0+3.0, sh/2.0+3.0, 70.0, Color::from_rgba(0,0,0,200));
+            draw_text(t, sw/2.0-tw/2.0, sh/2.0, 70.0, Color::from_rgba(220,190,50,255));
+            let s = "The dungeon is cleared!";
+            let sw2 = measure_text(s, None, 26, 1.0).width;
+            draw_text(s, sw/2.0-sw2/2.0, sh/2.0+60.0, 26.0, Color::from_rgba(180,230,180,255));
+            let r = "Press R to Play Again  |  ESC for Menu";
+            let rw = measure_text(r, None, 20, 1.0).width;
+            draw_text(r, sw/2.0-rw/2.0, sh/2.0+100.0, 20.0, WHITE);
         }
     }
 
@@ -326,10 +384,8 @@ impl Level {
             draw_rectangle(cx, cy, cell, cell, color);
             if is_current {
                 draw_rectangle_lines(cx, cy, cell, cell, 2.0, WHITE);
-                // Player dot
                 draw_circle(cx+cell/2.0, cy+cell/2.0, 3.0, WHITE);
             }
-            if room.enemies.is_empty() { /* cleared - slightly brighter already */ }
         }
 
         // Legend
