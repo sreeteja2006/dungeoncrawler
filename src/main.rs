@@ -1,7 +1,9 @@
 use macroquad::prelude::*;
-use crate::level::*;
 
-mod room; mod player; mod update; mod projectiles; mod enemy; mod level;
+mod room; mod player; mod update; mod projectiles; mod enemy; mod level; mod menu;
+
+use level::Level;
+use menu::Menu;
 
 pub struct EnemyTextures { pub idle: Option<Texture2D>, pub run: Option<Texture2D> }
 
@@ -24,7 +26,7 @@ impl Resources {
             player:      tex("assets/player.png").await,
             skeleton1:   EnemyTextures { idle: tex("assets/skeleton1_idle.png").await, run: tex("assets/skeleton1_run.png").await },
             skeleton2:   EnemyTextures { idle: tex("assets/skeleton2_idle.png").await, run: tex("assets/skeleton2_run.png").await },
-            vampire:     EnemyTextures { idle: tex("assets/vampire_idle.png").await,   run: tex("assets/vampire_run.png").await   },
+            vampire:     EnemyTextures { idle: tex("assets/vampire_idle.png").await,   run: tex("assets/vampire_run.png").await },
             projectile:  tex("assets/projectile.png").await,
             heart:       tex("assets/heart.png").await,
             speed_item:  tex("assets/flask_speed.png").await,
@@ -34,14 +36,28 @@ impl Resources {
     }
 }
 
+#[derive(PartialEq)]
+pub enum GameState { Menu, Playing }
+
 #[macroquad::main("Dungeon Crawler")]
 async fn main() {
-    let resources = Resources::load().await;
+    let res = Resources::load().await;
+    let mut state = GameState::Menu;
+    let mut menu  = Menu::new();
     let mut level = Level::new();
+
     loop {
         clear_background(BLACK);
-        level.update_level();
-        level.draw_level(&resources);
+        match state {
+            GameState::Menu => {
+                if menu.update_draw() { level = Level::new(); state = GameState::Playing; }
+            }
+            GameState::Playing => {
+                level.update_level();
+                level.draw_level(&res);
+                if level.back_to_menu { state = GameState::Menu; menu = Menu::new(); }
+            }
+        }
         next_frame().await;
     }
 }
