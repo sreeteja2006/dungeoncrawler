@@ -32,23 +32,7 @@ impl Room {
         let sh = screen_height();
 
         if room_type != RoomType::Start {
-            let count = match room_type { RoomType::Boss => 1, _ => gen_range(3, 7) };
-
-            for _ in 0..count {
-                let (x, y) = loop {
-                    let x = gen_range(MARGIN, sw - MARGIN);
-                    let y = gen_range(MARGIN, sh - MARGIN);
-                    let cx = sw / 2.0; let cy = sh / 2.0;
-                    if ((x-cx).powi(2) + (y-cy).powi(2)).sqrt() > 150.0 { break (x, y); }
-                };
-                let e_type = if room_type == RoomType::Boss { EnemyType::Vampire }
-                    else { match gen_range(0, 3) { 0 => EnemyType::Skeleton1, 1 => EnemyType::Skeleton2, _ => EnemyType::Vampire } };
-
-                let mut e = Enemy::new(x, y, e_type);
-                if room_type == RoomType::Boss { e.width = 120.0; e.height = 120.0; e.hp = 20; e.speed = 120.0; }
-                enemies.push(e);
-            }
-
+            // Generate obstacles FIRST so enemy spawns can avoid them
             let obs_count = gen_range(5, 10);
             for _ in 0..obs_count {
                 let (ow, oh) = (64.0_f32, 64.0_f32);
@@ -60,6 +44,28 @@ impl Room {
                     if !r.overlaps(&safe) { break (ox, oy); }
                 };
                 obstacles.push(Rect::new(ox, oy, ow, oh));
+            }
+
+            // Spawn enemies avoiding obstacles and center safe zone
+            let count = match room_type { RoomType::Boss => 1, _ => gen_range(3, 7) };
+            for _ in 0..count {
+                let ew = 64.0_f32; let eh = 64.0_f32;
+                let (x, y) = loop {
+                    let x = gen_range(MARGIN, sw - MARGIN - ew);
+                    let y = gen_range(MARGIN, sh - MARGIN - eh);
+                    let cx = sw / 2.0; let cy = sh / 2.0;
+                    let far_from_center = ((x-cx).powi(2) + (y-cy).powi(2)).sqrt() > 150.0;
+                    let e_rect = Rect::new(x, y, ew, eh);
+                    let no_obs_overlap = obstacles.iter().all(|o| !e_rect.overlaps(o));
+                    if far_from_center && no_obs_overlap { break (x, y); }
+                };
+
+                let e_type = if room_type == RoomType::Boss { EnemyType::Vampire }
+                    else { match gen_range(0, 3) { 0 => EnemyType::Skeleton1, 1 => EnemyType::Skeleton2, _ => EnemyType::Vampire } };
+
+                let mut e = Enemy::new(x, y, e_type);
+                if room_type == RoomType::Boss { e.width = 120.0; e.height = 120.0; e.hp = 20; e.speed = 120.0; }
+                enemies.push(e);
             }
         }
 
